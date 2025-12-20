@@ -1,9 +1,24 @@
 import React, { useEffect, useState } from "react";
 import "./App.css";
+import Globe3D from "./Globe3D.jsx";
 import WeatherMap from "./WeatherMap.jsx";
 import { BackgroundSVGs } from "./Background.jsx";
+import { capitals } from "./Capitals.jsx";
+import { useTranslation } from "react-i18next";
+import i18n, { addLanguage } from "./i18n";
+import { translationsMap } from "./translations";
+
+const formatDay = (date, lang) =>
+  new Intl.DateTimeFormat(lang, {
+    weekday: "long",
+    day: "numeric",
+    month: "short",
+  }).format(new Date(date));
 
 function App() {
+  const { t } = useTranslation();
+
+  const [showGlobe, setShowGlobe] = useState(true);
   const [lat, setLat] = useState(43.7874);
   const [lon, setLon] = useState(11.2499);
   const [cityName, setCityName] = useState("Firenze");
@@ -12,6 +27,21 @@ function App() {
   const [selectedDateState, setSelectedDateState] = useState(null);
   const [meteo, setMeteo] = useState(null);
   const [loading, setLoading] = useState(false);
+
+  const handleStateClick = (stateName) => {
+    const capital = capitals[stateName];
+    if (!capital) return;
+
+    setLat(capital.lat);
+    setLon(capital.lon);
+    setCityName(capital.name);
+    setSelectedDateState(null);
+
+    const lng = capital.language || "en";
+    if (translationsMap[lng]) addLanguage(lng, translationsMap[lng]);
+    i18n.changeLanguage(translationsMap[lng] ? lng : "en");
+    setShowGlobe(false);
+  };
 
   const getWeatherEmoji = (code) => {
     if (code === 0) return "☀️";
@@ -135,7 +165,6 @@ if (hourly) {
   return (
     <div className="app-container">
       {!showGlobe && BackgroundSVGs[getBackgroundClass()]}
-
       <div className="content">
         {showGlobe ? (
           <Globe3D onStateClick={handleStateClick} />
@@ -153,7 +182,7 @@ if (hourly) {
               <h2 style={{ fontSize: "28px", margin: 0 }}>{cityName}</h2>
               <div style={{ fontSize: "36px", margin: "6px 0" }}>
                 {getWeatherEmoji(daily.weathercode[day])} {daily.temperature_2m_max[day]}°
-              </div>   
+              </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <h2 style={{ fontSize: "28px", margin: 0 }}>{cityName}</h2>
               {!showGlobe && (
@@ -296,6 +325,8 @@ if (hourly) {
                 </div>
               ))}
             </div>
+
+            {/* GRID */}
             <div
               style={{
                 display: "grid",
