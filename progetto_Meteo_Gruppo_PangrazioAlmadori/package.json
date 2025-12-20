@@ -10,10 +10,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "i18next": "^25.7.3",
     "ol": "^10.7.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-globe.gl": "^2.37.0",
+    "react-i18next": "^16.5.0",
     "three": "^0.182.0"
   },
   "devDependencies": {
