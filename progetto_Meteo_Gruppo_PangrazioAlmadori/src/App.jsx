@@ -1,16 +1,17 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import "./App.css";
+import WeatherMap from "./WeatherMap.jsx";
 import { BackgroundSVGs } from "./Background.jsx";
 
-
 function App() {
-  const [meteo, setMeteo] = useState(null);
-  const [loading, setLoading] = useState(false);
   const [lat, setLat] = useState(43.7874);
   const [lon, setLon] = useState(11.2499);
-  const [cityInput, setCityInput] = useState("");
   const [cityName, setCityName] = useState("Firenze");
+  const [cityInput, setCityInput] = useState("");
+  const [citySuggestions, setCitySuggestions] = useState([]);
   const [selectedDateState, setSelectedDateState] = useState(null);
+  const [meteo, setMeteo] = useState(null);
+  const [loading, setLoading] = useState(false);
 
   const getWeatherEmoji = (code) => {
     if (code === 0) return "☀️";
@@ -22,8 +23,28 @@ function App() {
     return "🌤️";
   };
 
+  const calculateDailyPrecipitationAverage = (hourly) => {
+    if (!hourly || !hourly.precipitation) return [];
+    const dailyData = {};
+    hourly.time.forEach((time, i) => {
+      const date = time.split("T")[0];
+      if (!dailyData[date]) dailyData[date] = [];
+      dailyData[date].push(hourly.precipitation[i]);
+    });
+    return Object.keys(dailyData).map((date) => {
+      const sum = dailyData[date].reduce((acc, val) => acc + val, 0);
+      const avg = sum / dailyData[date].length;
+      return { date, avg: parseFloat(avg.toFixed(2)) };
+    });
+  };
+
   const getBackgroundClass = () => {
     if (!meteo) return "night";
+    const { daily } = meteo;
+    const dayIndex = selectedDateState
+      ? daily.time.findIndex((d) => d === selectedDateState)
+      : 0;
+    const day = dayIndex !== -1 ? dayIndex : 0;
 
     const hour = new Date().getHours();
     const isNight = hour < 6 || hour >= 20;
@@ -43,28 +64,8 @@ function App() {
     return "clear";
   };
 
-  const calculateDailyPrecipitationAverage = (hourly) => {
-    if (!hourly || !hourly.precipitation) return [];
-    const dailyData = {};
-    hourly.time.forEach((time, i) => {
-      const date = time.split("T")[0];
-      if (!dailyData[date]) dailyData[date] = [];
-      dailyData[date].push(hourly.precipitation[i]);
-    });
-    return Object.keys(dailyData).map((date) => {
-      const sum = dailyData[date].reduce((acc, val) => acc + val, 0);
-      const avg = sum / dailyData[date].length;
-      return { date, avg: parseFloat(avg.toFixed(2)) };
-    });
-  };
-
   useEffect(() => {
-    const searchParams = new URLSearchParams(window.location.search);
-    const dateParam = searchParams.get("date");
-    if (dateParam) setSelectedDateState(dateParam);
-  }, []);
-
-  useEffect(() => {
+    if (showGlobe) return;
     const fetchMeteo = async () => {
       setLoading(true);
       try {
@@ -79,271 +80,288 @@ function App() {
       setLoading(false);
     };
     fetchMeteo();
-  }, [lat, lon]);
+  }, [lat, lon, showGlobe]);
 
-  const searchCity = async () => {
-    if (!cityInput) return;
-    try {
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
-          cityInput
-        )}`
-      );
-      const data = await res.json();
-      if (data && data.length > 0) {
-        const place = data[0];
-        setLat(parseFloat(place.lat));
-        setLon(parseFloat(place.lon));
-        setCityName(place.display_name.split(",")[0]);
-        setSelectedDateState(null);
-        setCityInput("");
-        window.history.replaceState({}, "", window.location.pathname);
-      } else {
-        alert("Città non trovata");
-      }
-    } catch (err) {
-      console.error("Errore geocoding:", err);
-    }
+  const selectCity = (city) => {
+    setLat(parseFloat(city.lat));
+    setLon(parseFloat(city.lon));
+    setCityName(city.display_name.split(",")[0]);
+    setSelectedDateState(null);
+    setCityInput("");
+    setCitySuggestions([]);
   };
 
-  if (loading) return <p className="loading">Caricamento...</p>;
-  if (!meteo) return <p className="loading">Nessun dato disponibile</p>;
+  const openDay = (i) => {
+    const date = meteo.daily.time[i];
+    setSelectedDateState(date);
+  };
 
-  const { hourly, daily } = meteo;
+  if (loading) return <p className="loading">{t("loading")}</p>;
+  if (!meteo && !showGlobe) return <p className="loading">{t("no_data")}</p>;
+
+  const { hourly, daily } = meteo || {};
+
+let hourlySlice = [];
+if (hourly) {
+  const todayDateStr = new Date().toLocaleDateString("en-CA", { timeZone: meteo.timezone }); // YYYY-MM-DD
+  const selectedDateStr = selectedDateState || todayDateStr;
+
+  if (selectedDateStr === todayDateStr) {
+    const currentHour = new Date().toLocaleString("en-US", { timeZone: meteo.timezone, hour12: false, hour: "2-digit" });
+    const startIndex = hourly.time.findIndex((t) =>
+      t.startsWith(todayDateStr + "T" + String(currentHour).padStart(2, "0"))
+    );
+    hourlySlice = hourly.time
+      .map((t, i) => ({ time: t, index: i }))
+      .filter(({ time, index }) => index >= startIndex && time.startsWith(todayDateStr))
+      .slice(0, 24);
+  } else {
+    hourlySlice = hourly.time
+      .map((t, i) => ({ time: t, index: i }))
+      .filter(({ time }) => time.startsWith(selectedDateStr));
+    }
+  }
 
   const dayIndex = selectedDateState
-    ? daily.time.findIndex((d) => d === selectedDateState)
+    ? daily?.time.findIndex((d) => d === selectedDateState)
     : 0;
   const day = dayIndex !== -1 ? dayIndex : 0;
 
   const todayPrecipitationAvg =
-    calculateDailyPrecipitationAverage(hourly)[day]?.avg || 0;
-
-  const todayString = new Date().toISOString().split("T")[0];
-  let startIndex;
-
-  if (!selectedDateState || selectedDateState === todayString) {
-    const now = new Date();
-    now.setMinutes(0, 0, 0);
-    const pad = (n) => n.toString().padStart(2, "0");
-    const localTimeString =
-      now.getFullYear() +
-      "-" +
-      pad(now.getMonth() + 1) +
-      "-" +
-      pad(now.getDate()) +
-      "T" +
-      pad(now.getHours()) +
-      ":00";
-    startIndex = hourly.time.findIndex((t) => t === localTimeString);
-    if (startIndex === -1) startIndex = 0;
-  } else {
-    startIndex = hourly.time.findIndex((t) =>
-      t.startsWith(selectedDateState)
-    );
-    if (startIndex === -1) startIndex = 0;
-  }
-
-  const hourlySlice = hourly.time.slice(startIndex, startIndex + 24);
-  const currentUV = hourly.uv_index?.[startIndex] ?? "-";
-  const currentHumidity = hourly.relative_humidity_2m?.[startIndex] ?? "-";
-
-  const openDay = (i) => {
-    const date = daily.time[i];
-    setSelectedDateState(date);
-    const url = new URL(window.location);
-    url.searchParams.set("date", date);
-    window.history.replaceState({}, "", url);
-  };
+    hourly ? calculateDailyPrecipitationAverage(hourly)[day]?.avg || 0 : 0;
+  const currentUV = hourly?.uv_index?.[0] ?? "-";
+  const currentHumidity = hourly?.relative_humidity_2m?.[0] ?? "-";
 
   return (
     <div className="app-container">
-      {BackgroundSVGs[getBackgroundClass()]}
-      <div className="content">
-        
-        {/* HEADER */}
-        <div
-          style={{
-            background: "#1f2937",
-            borderRadius: "20px",
-            padding: "20px",
-            boxShadow: "0 10px 30px rgba(0,0,0,0.4)",
-            marginBottom: "20px",
-          }}
-        >
-          <h2 style={{ fontSize: "28px", margin: 0 }}>{cityName}</h2>
-          <div style={{ fontSize: "36px", margin: "6px 0" }}>
-            {getWeatherEmoji(daily.weathercode[day])}{" "}
-            {daily.temperature_2m_max[day]}°
-          </div>
+      {!showGlobe && BackgroundSVGs[getBackgroundClass()]}
 
-          {/* SEARCH BAR */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              background: "#111827",
-              borderRadius: "999px",
-              padding: "6px 10px",
-              marginTop: "12px",
-              maxWidth: "320px",
-            }}
-          >
-            <input
-              type="text"
-              placeholder="Cerca città..."
-              value={cityInput}
-              onChange={(e) => setCityInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && searchCity()}
+      <div className="content">
+        {showGlobe ? (
+          <Globe3D onStateClick={handleStateClick} />
+        ) : (
+          <>
+            <div
               style={{
-                flex: 1,
-                background: "transparent",
-                border: "none",
-                outline: "none",
-                color: "white",
-                padding: "10px",
-                fontSize: "14px",
-              }}
-            />
-            <button
-              onClick={searchCity}
-              style={{
-                background: "#3b82f6",
-                border: "none",
-                borderRadius: "50%",
-                width: "38px",
-                height: "38px",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
+                background: "#1f2937",
+                borderRadius: "20px",
+                padding: "20px",
+                boxShadow: "0 10px 30px rgba(0,0,0,0.4)",
+                marginBottom: "20px",
               }}
             >
-              🔍
-            </button>
-          </div>
-
-          {/* STATS */}
-          <div
-            style={{
-              display: "flex",
-              gap: "16px",
-              flexWrap: "wrap",
-              marginTop: "16px",
-            }}
-          >
-            <div>☀ UV {currentUV}</div>
-            <div>🌧 {todayPrecipitationAvg} mm</div>
-            <div>💧 {currentHumidity}%</div>
-            <div>💨 {daily.windspeed_10m_max[day]} km/h</div>
-          </div>
-        </div>
-
-        {/* METEO ORARIO */}
-        <div
-          className="hourly-container"
-          style={{
-            background: "#1f2937",
-            borderRadius: "20px",
-            padding: "16px",
-            marginBottom: "20px",
-            display: "flex",
-            gap: "14px",
-            overflowX: "auto",
-          }}
-        >
-          {hourlySlice.map((time, i) => {
-            const index = startIndex + i;
-            return (
-              <div
-                key={index}
-                style={{
-                  minWidth: "80px",
-                  textAlign: "center",
-                  background: "#111827",
-                  borderRadius: "14px",
-                  padding: "10px",
-                }}
-              >
-                <div style={{ fontSize: "18px", fontWeight: "bold" }}>
-                  {hourly.temperature_2m[index]}°
-                </div>
-                <div style={{ fontSize: "22px" }}>
-                  {getWeatherEmoji(hourly.weathercode[index])}
-                </div>
-                <div style={{ fontSize: "12px", opacity: 0.7 }}>
-                  {time.slice(11, 16)}
-                </div>
+              <h2 style={{ fontSize: "28px", margin: 0 }}>{cityName}</h2>
+              <div style={{ fontSize: "36px", margin: "6px 0" }}>
+                {getWeatherEmoji(daily.weathercode[day])} {daily.temperature_2m_max[day]}°
+              </div>   
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h2 style={{ fontSize: "28px", margin: 0 }}>{cityName}</h2>
+              {!showGlobe && (
+                <button
+                  onClick={() => setShowGlobe(true)}
+                  style={{
+                    background: "#111827",
+                    border: "1px solid #3b82f6",
+                    borderRadius: "999px",
+                    padding: "8px 16px",
+                    color: "#3b82f6",
+                    cursor: "pointer",
+                    fontWeight: "bold",
+                    transition: "all 0.2s ease",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.background = "#3b82f6";
+                    e.target.style.color = "white";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.background = "#111827";
+                    e.target.style.color = "#3b82f6";
+                  }}
+                >
+                  🌍 {t("back_to_globe")}
+                </button>
+              )}
+            </div>
+              <div style={{ position: "relative", maxWidth: "320px", marginTop: "12px" }}>
+                <input
+                  type="text"
+                  placeholder={t("search_city")}
+                  value={cityInput}
+                  onChange={async (e) => {
+                    const value = e.target.value;
+                    setCityInput(value);
+                    if (!value) return setCitySuggestions([]);
+                    try {
+                      const res = await fetch(
+                        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+                          value
+                        )}&limit=5`
+                      );
+                      const data = await res.json();
+                      setCitySuggestions(data || []);
+                    } catch {
+                      setCitySuggestions([]);
+                    }
+                  }}
+                  style={{
+                    padding: "10px",
+                    fontSize: "14px",
+                    borderRadius: "999px",
+                    border: "none",
+                    outline: "none",
+                    background: "#111827",
+                    color: "white",
+                    width: "100%",
+                  }}
+                />
+                {citySuggestions?.length > 0 && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: "44px",
+                      left: 0,
+                      right: 0,
+                      background: "#1f2937",
+                      borderRadius: "12px",
+                      boxShadow: "0 4px 8px rgba(0,0,0,0.3)",
+                      zIndex: 10,
+                      maxHeight: "200px",
+                      overflowY: "auto",
+                    }}
+                  >
+                    {citySuggestions.map((city, i) => (
+                      <div
+                        key={i}
+                        onClick={() => selectCity(city)}
+                        style={{
+                          padding: "10px",
+                          cursor: "pointer",
+                          borderBottom: i < citySuggestions.length - 1 ? "1px solid #374151" : "none",
+                        }}
+                        onMouseEnter={(e) => (e.target.style.background = "#374151")}
+                        onMouseLeave={(e) => (e.target.style.background = "#1f2937")}
+                      >
+                        {city.display_name}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            );
-          })}
-        </div>
-
-        {/* GRID */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: "20px",
-          }}
-        >
-          {/* SETTIMANA */}
-          <div
-            style={{
-              background: "#1f2937",
-              borderRadius: "20px",
-              padding: "16px",
-            }}
-          >
-            <h3>Meteo settimanale</h3>
-            {daily.time.map((d, i) => (
               <div
-                key={i}
-                onClick={() => openDay(i)}
                 style={{
                   display: "flex",
-                  justifyContent: "space-between",
-                  padding: "10px",
-                  borderRadius: "12px",
-                  cursor: "pointer",
-                  background: i === day ? "#374151" : "transparent",
+                  gap: "16px",
+                  flexWrap: "wrap",
+                  marginTop: "16px",
                 }}
               >
-                <span>{d}</span>
-                <span>
-                  {daily.temperature_2m_min[i]}° / {daily.temperature_2m_max[i]}°
-                  {getWeatherEmoji(daily.weathercode[i])}
-                </span>
+                <div>☀ {t("uv")}: {currentUV}</div>
+                <div>💧 {t("humidity")}: {currentHumidity}%</div>
+                <div>🌧 {t("rain")}: {todayPrecipitationAvg} {t("mm")}</div>
+                <div>💨 {t("wind")}: {daily.windspeed_10m_max[day]} {t("kmh")}</div>
               </div>
-            ))}
-          </div>
-
-          {/* DETTAGLI */}
-          <div
-            style={{
-              background: "#1f2937",
-              borderRadius: "20px",
-              padding: "16px",
-            }}
-          >
-            <h3>Dettagli meteo</h3>
-            <p>🌡 Min: {daily.temperature_2m_min[day]}°</p>
-            <p>🌡 Max: {daily.temperature_2m_max[day]}°</p>
-            <p>🌧 Pioggia: {daily.precipitation_sum[day]} mm</p>
-            <p>💨 Vento: {daily.windspeed_10m_max[day]} km/h</p>
-          </div>
-        </div>
-
-        {/* MAPPA */}
-        <div
-          style={{
-            marginTop: "20px",
-            borderRadius: "20px",
-            overflow: "hidden",
-          }}
-        >
-          
-        </div>
+            </div>
+            <div
+              className="hourly-container"
+              style={{
+                background: "#1f2937",
+                borderRadius: "20px",
+                padding: "16px",
+                marginBottom: "20px",
+                display: "flex",
+                gap: "14px",
+                overflowX: "auto",
+              }}
+            >
+              {hourlySlice.map(({ time, index }) => (
+                <div
+                  key={index}
+                  style={{
+                    minWidth: "80px",
+                    textAlign: "center",
+                    background: "#111827",
+                    borderRadius: "14px",
+                    padding: "10px",
+                  }}
+                >
+                  <div style={{ fontSize: "18px", fontWeight: "bold" }}>
+                    {hourly.temperature_2m[index]}°
+                  </div>
+                  <div style={{ fontSize: "22px" }}>
+                    {getWeatherEmoji(hourly.weathercode[index])}
+                  </div>
+                  <div style={{ fontSize: "12px", opacity: 0.7 }}>
+                    {time.slice(11, 16)}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "20px",
+              }}
+            >
+              <div
+                style={{
+                  background: "#1f2937",
+                  borderRadius: "20px",
+                  padding: "16px",
+                }}
+              >
+                <h3>{t("weekly_weather")}</h3>
+                {daily.time.map((d, i) => (
+                  <div
+                    key={i}
+                    onClick={() => openDay(i)}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      padding: "10px",
+                      borderRadius: "12px",
+                      cursor: "pointer",
+                      background: i === day ? "#374151" : "transparent",
+                    }}
+                  >
+                    <span>{formatDay(d, i18n.language)}</span>
+                    <span>
+                      {daily.temperature_2m_min[i]}° / {daily.temperature_2m_max[i]}°
+                      {getWeatherEmoji(daily.weathercode[i])}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div
+                style={{
+                  background: "#1f2937",
+                  borderRadius: "20px",
+                  padding: "16px",
+                }}
+              >
+                <h3>{t("weather_details")}</h3>
+                <p>🌡 {t("min")}: {daily.temperature_2m_min[day]}°</p>
+                <p>🌡 {t("max")}: {daily.temperature_2m_max[day]}°</p>
+                <p>🌧 {t("rain")}: {daily.precipitation_sum[day]} mm</p>
+                <p>💨 {t("wind")}: {daily.windspeed_10m_max[day]} km/h</p>
+              </div>
+            </div>
+            <div
+              style={{
+                marginTop: "20px",
+                borderRadius: "20px",
+                overflow: "hidden",
+              }}
+            >
+              <WeatherMap
+                lon={lon}
+                lat={lat}
+                hourly={hourly}
+                selectedDate={selectedDateState}
+              />
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
